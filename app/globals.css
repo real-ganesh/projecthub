@@ -1,26 +1,98 @@
+/* Replace the ENTIRE contents of app/globals.css with this. */
+
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-paper: #e9e6da;
+  --color-paper-raised: #f5f3ea;
+  --color-ink: #1c2430;
+  --color-ink-soft: #4a5266;
+  --color-rule: #c7c1ac;
+  --color-stamp-red: #9c3b32;
+  --color-stamp-green: #3e6b4c;
+  --color-stamp-gold: #8b6a34;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-paper);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  color: var(--color-ink);
+  font-family: var(--font-sans), sans-serif;
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-serif), serif;
+}
+
+.ledger-card {
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-rule);
+  border-radius: 4px;
+}
+
+.rule {
+  border-top: 1px solid var(--color-rule);
+}
+
+.stamp {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  transform: rotate(-2deg);
+}
+.stamp-pending  { color: var(--color-stamp-red); }
+.stamp-approved { color: var(--color-stamp-green); }
+.stamp-locked   { color: var(--color-stamp-gold); }
+.stamp-rejected { color: var(--color-stamp-red); }
+
+.btn-primary {
+  background: var(--color-ink);
+  color: var(--color-paper-raised);
+  border-radius: 3px;
+  padding: 0.65rem 1.5rem;
+  font-weight: 500;
+  transition: opacity 0.15s ease;
+}
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.5; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--color-ink);
+  border: 1.5px solid var(--color-ink);
+  border-radius: 3px;
+  padding: 0.65rem 1.5rem;
+  font-weight: 500;
+  transition: background 0.15s ease;
+}
+.btn-secondary:hover { background: rgba(28, 36, 48, 0.06); }
+
+.input-field {
+  width: 100%;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-rule);
+  border-radius: 3px;
+  padding: 0.6rem 0.9rem;
+  color: var(--color-ink);
+}
+.input-field:focus {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 1px;
+}
+
+/* One deliberate entrance moment — used on the main card of each page,
+   not on every element. */
+@keyframes fadeRise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-rise-in {
+  animation: fadeRise 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-rise-in { animation: none; }
 }
