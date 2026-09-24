@@ -1,20 +1,12 @@
+// Replace the ENTIRE contents of app/login/student/page.tsx with this.
+// (Same logic as before — only the styling changed.)
+
 'use client'
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-
-function Seal() {
-  return (
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" className="mx-auto mb-3 text-[var(--color-ink)]">
-      <circle cx="16" cy="16" r="14" stroke="currentColor" strokeWidth="1.3" />
-      <path d="M11 10h7l3 3v9H11V10z" stroke="currentColor" strokeWidth="1.2" fill="none" />
-      <path d="M18 10v3h3" stroke="currentColor" strokeWidth="1.2" fill="none" />
-      <line x1="13" y1="16" x2="19" y2="16" stroke="currentColor" strokeWidth="1" />
-      <line x1="13" y1="19" x2="19" y2="19" stroke="currentColor" strokeWidth="1" />
-    </svg>
-  )
-}
+import { HubMark } from '@/app/components/Header'
 
 export default function StudentLogin() {
   const router = useRouter()
@@ -85,12 +77,12 @@ export default function StudentLogin() {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-6">
-      <div className="ledger-card fade-rise-in w-full max-w-sm px-8 py-10">
-        <Seal />
-        <h1 className="font-display italic text-2xl mb-1 text-center">
+      <div className="glass-card fade-rise-in w-full max-w-sm px-8 py-10">
+        <div className="flex justify-center mb-3"><HubMark /></div>
+        <h1 className="font-display font-semibold text-2xl mb-1 text-center">
           Student {mode === 'login' ? 'Login' : 'Sign Up'}
         </h1>
-        <p className="text-sm text-[var(--color-ink-soft)] text-center mb-6">
+        <p className="text-sm text-[var(--text-soft)] text-center mb-6">
           {mode === 'login' ? 'Welcome back.' : 'Register with your institutional email.'}
         </p>
 
@@ -134,18 +126,18 @@ export default function StudentLogin() {
             className="input-field"
           />
 
-          {error && <p className="text-[var(--color-stamp-red)] text-sm">{error}</p>}
+          {error && <p className="text-[var(--danger)] text-sm">{error}</p>}
 
           <button type="submit" disabled={loading} className="btn-primary w-full">
             {loading ? 'Please wait…' : mode === 'login' ? 'Log In' : 'Sign Up'}
           </button>
         </form>
 
-        <p className="text-sm text-center mt-6 text-[var(--color-ink-soft)]">
+        <p className="text-sm text-center mt-6 text-[var(--text-soft)]">
           {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}{' '}
           <button
             onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}
-            className="underline text-[var(--color-ink)]"
+            className="underline text-[var(--accent)]"
           >
             {mode === 'login' ? 'Sign up' : 'Log in'}
           </button>

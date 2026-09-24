@@ -1,18 +1,23 @@
 import type { Metadata } from 'next'
-import { Newsreader, Public_Sans } from 'next/font/google'
+import { Space_Grotesk, IBM_Plex_Sans, IBM_Plex_Mono } from 'next/font/google'
 import './globals.css'
 
-const newsreader = Newsreader({
+const display = Space_Grotesk({
   subsets: ['latin'],
-  variable: '--font-serif',
-  style: ['normal', 'italic'],
+  variable: '--font-display',
+  weight: ['500', '600', '700'],
+})
+
+const sans = IBM_Plex_Sans({
+  subsets: ['latin'],
+  variable: '--font-sans',
   weight: ['400', '500', '600'],
 })
 
-const publicSans = Public_Sans({
+const mono = IBM_Plex_Mono({
   subsets: ['latin'],
-  variable: '--font-sans',
-  weight: ['400', '500', '600', '700'],
+  variable: '--font-mono',
+  weight: ['400', '500'],
 })
 
 export const metadata: Metadata = {
@@ -24,7 +29,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${newsreader.variable} ${publicSans.variable}`}>
+    <html lang="en" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   )

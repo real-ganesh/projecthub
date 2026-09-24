@@ -1,8 +1,12 @@
+// Replace the ENTIRE contents of app/topics/page.tsx with this.
+// (Same logic as before — restyled, uses the shared Header.)
+
 'use client'
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { Header } from '@/app/components/Header'
 
 type Topic = {
   id: string
@@ -12,11 +16,11 @@ type Topic = {
   locked_group_name: string | null
 }
 
-function statusStampClass(status: string) {
-  if (status === 'locked') return 'stamp-locked'
-  if (status === 'pending' || status === 'pending_group_review') return 'stamp-pending'
-  if (status === 'rejected') return 'stamp-rejected'
-  return 'stamp-approved'
+function statusTagClass(status: string) {
+  if (status === 'locked') return 'tag-locked'
+  if (status === 'pending' || status === 'pending_group_review') return 'tag-pending'
+  if (status === 'rejected') return 'tag-rejected'
+  return 'tag-approved'
 }
 
 function statusLabel(status: string) {
@@ -65,7 +69,7 @@ export default function TopicsPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-[var(--color-ink-soft)]">Loading…</p>
+        <p className="text-[var(--text-soft)]">Loading…</p>
       </div>
     )
   }
@@ -74,25 +78,18 @@ export default function TopicsPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="px-8 py-6 rule flex items-center justify-between">
-        <span className="font-display text-lg italic">ProjectHub</span>
-        <nav className="flex gap-6 text-sm">
-          <a href="/home" className="hover:underline">Home</a>
-          <a href="/team" className="hover:underline">My Team</a>
-          <a href="/topics" className="underline font-medium">Select a Project</a>
-        </nav>
-      </header>
+      <Header role="student" active="/topics" />
 
       <main className="flex-1 px-6 py-12">
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center justify-between mb-8">
-            <h1 className="font-display italic text-3xl">Browse Topics</h1>
+            <h1 className="font-display font-semibold text-3xl">Browse Topics</h1>
             <a href="/topics/new" className="btn-secondary text-sm">Propose your own topic</a>
           </div>
 
           {categories.map((cat) => (
             <div key={cat} className="mb-10">
-              <h2 className="font-medium text-sm uppercase tracking-wide text-[var(--color-ink-soft)] mb-3">
+              <h2 className="font-mono text-xs uppercase tracking-widest text-[var(--text-soft)] mb-3">
                 {cat}
               </h2>
               <div className="space-y-3">
@@ -102,18 +99,16 @@ export default function TopicsPage() {
                     <a
                       key={t.id}
                       href={`/topics/${t.id}`}
-                      className="ledger-card flex items-center justify-between px-6 py-4 hover:opacity-90"
+                      className="glass-card flex items-center justify-between px-6 py-4"
                     >
                       <span>{t.title}</span>
                       <div className="flex items-center gap-3">
                         {t.locked_group_name && (
-                          <span className="text-sm text-[var(--color-ink-soft)]">
+                          <span className="text-sm text-[var(--text-soft)] font-mono">
                             {t.locked_group_name}
                           </span>
                         )}
-                        <span className={`stamp ${statusStampClass(t.status)}`}>
-                          {statusLabel(t.status)}
-                        </span>
+                        <span className={`tag ${statusTagClass(t.status)}`}>{statusLabel(t.status)}</span>
                       </div>
                     </a>
                   ))}
