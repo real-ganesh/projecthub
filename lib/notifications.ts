@@ -1,6 +1,6 @@
 // Replace the ENTIRE contents of lib/notifications.ts with this.
-// (Same email + in-app logic as before — every function now also
-// triggers a real push notification via /api/send-push.)
+// (Same as before — added notifyChatMessage: in-app + push only,
+// no email, since an email per chat message would be spam.)
 
 import { supabase } from './supabase'
 
@@ -47,6 +47,13 @@ export async function createNotification(
   await sendPush(userId, 'ProjectHub', content)
 
   return data
+}
+
+// For chat messages specifically — in-app + push, no email. type must
+// be 'new_group_message' or 'new_dm_message' (used for unread counts).
+export async function notifyChatMessage(userId: string, type: string, content: string, relatedId: string) {
+  await supabase.from('notifications').insert({ user_id: userId, type, content, related_id: relatedId })
+  await sendPush(userId, 'ProjectHub', content)
 }
 
 export async function notifyGroupMembers(

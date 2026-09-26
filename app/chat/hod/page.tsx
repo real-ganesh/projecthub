@@ -1,4 +1,9 @@
-// Save this as app/chat/hod/page.tsx (create "hod" folder inside app/chat/).
+// Replace the ENTIRE contents of app/chat/hod/page.tsx with this.
+// (Same chat logic as before — now notifies HoD on send, and marks
+// this thread's notifications read on open. Convention: a message
+// FROM the student is notified to HoD with related_id = studentId;
+// a message FROM HoD is notified to the student with related_id =
+// hodId. This lets each side's unread count be looked up cleanly.)
 
 'use client'
 
@@ -7,11 +12,13 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { ChatWindow, ChatMessage } from '@/app/components/ChatWindow'
+import { notifyChatMessage } from '@/lib/notifications'
 
 export default function HodChatPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
+  const [userName, setUserName] = useState('')
   const [hodId, setHodId] = useState<string | null>(null)
   const [hodName, setHodName] = useState('')
 
@@ -24,10 +31,24 @@ export default function HodChatPage() {
       }
       setUserId(user.id)
 
-      // This assumes a single-department setup with one HoD account.
+      const { data: myProfile } = await supabase.from('profiles').select('full_name').eq('id', user.id).single()
+      setUserName(myProfile?.full_name || 'You')
+
       const { data: hod } = await supabase.from('profiles').select('id, full_name').eq('role', 'hod').limit(1).single()
       setHodId(hod?.id || null)
       setHodName(hod?.full_name || 'HoD')
+
+      // Mark unread messages FROM the HoD (related_id = hod's id) as read.
+      if (hod?.id) {
+        await supabase
+          .from('notifications')
+          .update({ is_read: true })
+          .eq('user_id', user.id)
+          .eq('type', 'new_dm_message')
+          .eq('related_id', hod.id)
+          .eq('is_read', false)
+      }
+
       setLoading(false)
     }
     load()
@@ -54,6 +75,8 @@ export default function HodChatPage() {
   async function sendMessage(content: string) {
     if (!userId || !hodId) return
     await supabase.from('direct_messages').insert({ student_id: userId, hod_id: hodId, sender_id: userId, content })
+    // From student -> HoD: related_id = studentId, so HoD can tell whose thread this is.
+    await notifyChatMessage(hodId, 'new_dm_message', `${userName}: ${content.slice(0, 60)}`, userId)
   }
 
   function subscribe(onNew: (msg: ChatMessage) => void) {

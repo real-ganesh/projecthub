@@ -1,11 +1,11 @@
 // Replace the ENTIRE contents of app/team/page.tsx with this.
-// (Same as before — added remove-member and transfer-leadership
-// controls, visible to the leader only, and only before the roster
-// freezes.)
+// (Same as before — createGroup now uses a useRef guard, which
+// updates synchronously, unlike state. This is what actually stops
+// a fast double-click from creating two groups.)
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
@@ -30,6 +30,7 @@ export default function TeamPage() {
 
   const [newGroupName, setNewGroupName] = useState('')
   const [creatingGroup, setCreatingGroup] = useState(false)
+  const creatingRef = useRef(false)
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<Profile[]>([])
   const [error, setError] = useState('')
@@ -112,7 +113,9 @@ export default function TeamPage() {
   async function createGroup(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!me || groupId || creatingGroup) return
+
+    if (!me || groupId || creatingRef.current) return
+    creatingRef.current = true
     setCreatingGroup(true)
 
     const { data: newGroup, error: groupError } = await supabase
@@ -122,6 +125,7 @@ export default function TeamPage() {
       .single()
 
     if (groupError || !newGroup) {
+      creatingRef.current = false
       setCreatingGroup(false)
       setError(groupError?.message || 'Could not create group.')
       return
@@ -131,13 +135,16 @@ export default function TeamPage() {
       .from('group_members')
       .insert({ group_id: newGroup.id, student_id: me.id, status: 'active' })
 
-    setCreatingGroup(false)
-
     if (memberError) {
+      await supabase.from('groups').delete().eq('id', newGroup.id)
+      creatingRef.current = false
+      setCreatingGroup(false)
       setError(memberError.message)
       return
     }
 
+    creatingRef.current = false
+    setCreatingGroup(false)
     await loadEverything()
   }
 

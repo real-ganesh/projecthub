@@ -1,14 +1,17 @@
-// Save this as app/hod/messages/page.tsx (create "messages" folder inside app/hod/).
+// Replace the ENTIRE contents of app/hod/messages/page.tsx with this.
+// (Same chat logic as before — student list now shows an unread
+// count per thread and sorts by most recent activity first.)
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { ChatWindow, ChatMessage } from '@/app/components/ChatWindow'
+import { notifyChatMessage } from '@/lib/notifications'
 
-type Student = { id: string; full_name: string }
+type Student = { id: string; full_name: string; unread: number; lastActivity: number }
 
 export default function HodMessagesPage() {
   const router = useRouter()
@@ -16,6 +19,41 @@ export default function HodMessagesPage() {
   const [hodId, setHodId] = useState<string | null>(null)
   const [students, setStudents] = useState<Student[]>([])
   const [selected, setSelected] = useState<Student | null>(null)
+
+  const loadStudents = useCallback(async (currentHodId: string) => {
+    const { data: studentList } = await supabase.from('profiles').select('id, full_name').eq('role', 'student')
+    const { data: unreadRows } = await supabase
+      .from('notifications')
+      .select('related_id')
+      .eq('user_id', currentHodId)
+      .eq('type', 'new_dm_message')
+      .eq('is_read', false)
+    const { data: lastMessages } = await supabase
+      .from('direct_messages')
+      .select('student_id, created_at')
+      .eq('hod_id', currentHodId)
+      .order('created_at', { ascending: false })
+
+    const unreadCounts: Record<string, number> = {}
+    for (const row of unreadRows || []) {
+      if (row.related_id) unreadCounts[row.related_id] = (unreadCounts[row.related_id] || 0) + 1
+    }
+
+    const lastActivity: Record<string, number> = {}
+    for (const row of lastMessages || []) {
+      if (!lastActivity[row.student_id]) lastActivity[row.student_id] = new Date(row.created_at).getTime()
+    }
+
+    const withMeta: Student[] = (studentList || []).map((s) => ({
+      id: s.id,
+      full_name: s.full_name,
+      unread: unreadCounts[s.id] || 0,
+      lastActivity: lastActivity[s.id] || 0,
+    }))
+
+    withMeta.sort((a, b) => b.lastActivity - a.lastActivity || a.full_name.localeCompare(b.full_name))
+    setStudents(withMeta)
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -31,17 +69,24 @@ export default function HodMessagesPage() {
         return
       }
       setHodId(user.id)
-
-      const { data: studentList } = await supabase
-        .from('profiles')
-        .select('id, full_name')
-        .eq('role', 'student')
-        .order('full_name')
-      setStudents(studentList || [])
+      await loadStudents(user.id)
       setLoading(false)
     }
     load()
-  }, [router])
+  }, [router, loadStudents])
+
+  async function selectStudent(s: Student) {
+    setSelected(s)
+    if (!hodId) return
+    await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', hodId)
+      .eq('type', 'new_dm_message')
+      .eq('related_id', s.id)
+      .eq('is_read', false)
+    setStudents((prev) => prev.map((p) => (p.id === s.id ? { ...p, unread: 0 } : p)))
+  }
 
   async function loadMessages(): Promise<ChatMessage[]> {
     if (!hodId || !selected) return []
@@ -64,6 +109,8 @@ export default function HodMessagesPage() {
   async function sendMessage(content: string) {
     if (!hodId || !selected) return
     await supabase.from('direct_messages').insert({ student_id: selected.id, hod_id: hodId, sender_id: hodId, content })
+    // From HoD -> student: related_id = hodId, so the student's single thread lookup works.
+    await notifyChatMessage(selected.id, 'new_dm_message', `${selected.full_name === 'You' ? 'HoD' : 'HoD'}: ${content.slice(0, 60)}`, hodId)
   }
 
   function subscribe(onNew: (msg: ChatMessage) => void) {
@@ -107,14 +154,19 @@ export default function HodMessagesPage() {
               {students.map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => setSelected(s)}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors"
+                  onClick={() => selectStudent(s)}
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between"
                   style={{
                     background: selected?.id === s.id ? 'rgba(47,111,237,0.1)' : 'transparent',
                     color: selected?.id === s.id ? 'var(--accent)' : 'var(--text)',
                   }}
                 >
-                  {s.full_name}
+                  <span>{s.full_name}</span>
+                  {s.unread > 0 && (
+                    <span className="w-5 h-5 rounded-full text-[10px] flex items-center justify-center text-white font-mono" style={{ background: 'var(--danger)' }}>
+                      {s.unread > 9 ? '9+' : s.unread}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>

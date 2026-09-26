@@ -1,4 +1,6 @@
-// Save this as app/chat/group/page.tsx (create "chat" then "group" folders inside app/).
+// Replace the ENTIRE contents of app/chat/group/page.tsx with this.
+// (Same chat logic as before — now notifies other members on send,
+// and marks this thread's notifications read on open.)
 
 'use client'
 
@@ -7,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { ChatWindow, ChatMessage } from '@/app/components/ChatWindow'
+import { notifyChatMessage } from '@/lib/notifications'
 
 export default function GroupChatPage() {
   const router = useRouter()
@@ -31,8 +34,21 @@ export default function GroupChatPage() {
         .eq('status', 'active')
         .maybeSingle()
 
-      setGroupId(membership?.group_id || null)
+      const gId = membership?.group_id || null
+      setGroupId(gId)
       setGroupName((membership?.groups as unknown as { name: string })?.name || '')
+
+      // Mark this thread's unread notifications as read now that it's open.
+      if (gId) {
+        await supabase
+          .from('notifications')
+          .update({ is_read: true })
+          .eq('user_id', user.id)
+          .eq('type', 'new_group_message')
+          .eq('related_id', gId)
+          .eq('is_read', false)
+      }
+
       setLoading(false)
     }
     load()
@@ -58,6 +74,23 @@ export default function GroupChatPage() {
   async function sendMessage(content: string) {
     if (!groupId || !userId) return
     await supabase.from('group_messages').insert({ group_id: groupId, sender_id: userId, content })
+
+    const { data: senderProfile } = await supabase.from('profiles').select('full_name').eq('id', userId).single()
+    const { data: members } = await supabase
+      .from('group_members')
+      .select('student_id')
+      .eq('group_id', groupId)
+      .eq('status', 'active')
+      .neq('student_id', userId)
+
+    for (const m of members || []) {
+      await notifyChatMessage(
+        m.student_id,
+        'new_group_message',
+        `${senderProfile?.full_name || 'Someone'} in ${groupName}: ${content.slice(0, 60)}`,
+        groupId
+      )
+    }
   }
 
   function subscribe(onNew: (msg: ChatMessage) => void) {
