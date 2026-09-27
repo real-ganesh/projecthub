@@ -1,11 +1,14 @@
 // Replace the ENTIRE contents of app/hod/messages/page.tsx with this.
-// (Same chat logic as before — student list now shows an unread
-// count per thread and sorts by most recent activity first.)
+// (Student names are now clickable links to their profile page.
+// Row changed from <button> to <div> since a link can't live inside
+// a button — clicking the row still selects the student to chat with,
+// clicking the name specifically goes to their profile instead.)
 
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { ChatWindow, ChatMessage } from '@/app/components/ChatWindow'
@@ -152,22 +155,28 @@ export default function HodMessagesPage() {
             {students.length === 0 && <p className="text-sm text-[var(--text-soft)] px-2">No students yet.</p>}
             <div className="space-y-1">
               {students.map((s) => (
-                <button
+                <div
                   key={s.id}
                   onClick={() => selectStudent(s)}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between"
+                  className="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between cursor-pointer"
                   style={{
                     background: selected?.id === s.id ? 'rgba(47,111,237,0.1)' : 'transparent',
                     color: selected?.id === s.id ? 'var(--accent)' : 'var(--text)',
                   }}
                 >
-                  <span>{s.full_name}</span>
+                  <Link
+                    href={`/profile/${s.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="hover:underline"
+                  >
+                    {s.full_name}
+                  </Link>
                   {s.unread > 0 && (
                     <span className="w-5 h-5 rounded-full text-[10px] flex items-center justify-center text-white font-mono" style={{ background: 'var(--danger)' }}>
                       {s.unread > 9 ? '9+' : s.unread}
                     </span>
                   )}
-                </button>
+                </div>
               ))}
             </div>
           </div>

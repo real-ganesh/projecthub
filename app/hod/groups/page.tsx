@@ -1,20 +1,26 @@
 // Replace the ENTIRE contents of app/hod/groups/page.tsx with this.
+// (Members are now stored as {id, full_name} objects instead of
+// plain strings, so their names can link to /profile/[id].)
 
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { notifyGroupMembers } from '@/lib/notifications'
+
+type MemberInfo = { id: string; full_name: string }
 
 type GroupRow = {
   id: string
   name: string
   department: string
   roster_frozen: boolean
+  leaderId: string
   leaderName: string
-  members: string[]
+  members: MemberInfo[]
   topicTitle: string | null
   progressPercent: number
 }
@@ -76,8 +82,12 @@ export default function HodGroups() {
         name: g.name,
         department: g.department,
         roster_frozen: g.roster_frozen,
+        leaderId: g.leader_id,
         leaderName: (leader?.profiles as unknown as { full_name: string })?.full_name || 'Unknown',
-        members: members.map((m) => (m.profiles as unknown as { full_name: string })?.full_name || 'Unknown'),
+        members: members.map((m) => ({
+          id: m.student_id,
+          full_name: (m.profiles as unknown as { full_name: string })?.full_name || 'Unknown',
+        })),
         topicTitle: topic?.title || null,
         progressPercent: percent,
       }
@@ -159,7 +169,15 @@ export default function HodGroups() {
                   <div>
                     <div className="font-display font-semibold text-lg">{g.name}</div>
                     <div className="text-xs text-[var(--text-soft)] font-mono">
-                      {g.department} · Leader: {g.leaderName} · {g.members.length} members
+                      {g.department} · Leader:{' '}
+                      <Link
+                        href={`/profile/${g.leaderId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="hover:underline"
+                      >
+                        {g.leaderName}
+                      </Link>
+                      {' '}· {g.members.length} members
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -179,8 +197,13 @@ export default function HodGroups() {
                         Roster: {g.roster_frozen ? 'Frozen (topic locked)' : 'Open'}
                       </p>
                       <ul className="text-sm space-y-1">
-                        {g.members.map((m, i) => (
-                          <li key={i}>{m}{m === g.leaderName ? ' (Leader)' : ''}</li>
+                        {g.members.map((m) => (
+                          <li key={m.id}>
+                            <Link href={`/profile/${m.id}`} className="hover:underline">
+                              {m.full_name}
+                            </Link>
+                            {m.id === g.leaderId ? ' (Leader)' : ''}
+                          </li>
                         ))}
                       </ul>
                     </div>

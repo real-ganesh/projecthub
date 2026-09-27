@@ -1,8 +1,11 @@
-// Save this as app/components/ChatWindow.tsx
+// Replace the ENTIRE contents of app/components/ChatWindow.tsx with this.
+// (Sender name above each message is now a clickable link to their
+// profile page — only shown for the other person's messages, same as before.)
 
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 
 export type ChatMessage = {
   id: string
@@ -68,7 +71,12 @@ export function ChatWindow({
               }}
             >
               {m.sender_id !== currentUserId && (
-                <p className="text-xs font-mono opacity-70 mb-0.5">{m.sender_name}</p>
+                <Link
+                  href={`/profile/${m.sender_id}`}
+                  className="text-xs font-mono opacity-70 mb-0.5 block hover:underline hover:opacity-100"
+                >
+                  {m.sender_name}
+                </Link>
               )}
               <p>{m.content}</p>
             </div>

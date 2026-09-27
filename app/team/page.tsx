@@ -1,12 +1,12 @@
 // Replace the ENTIRE contents of app/team/page.tsx with this.
-// (Same as before — createGroup now uses a useRef guard, which
-// updates synchronously, unlike state. This is what actually stops
-// a fast double-click from creating two groups.)
+// (Added: leave-group functionality, and made member names clickable
+// links to profile pages — self links to /profile, others to /profile/[id].)
 
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { createNotification } from '@/lib/notifications'
@@ -23,6 +23,7 @@ export default function TeamPage() {
   const [groupId, setGroupId] = useState<string | null>(null)
   const [groupName, setGroupName] = useState('')
   const [isLeader, setIsLeader] = useState(false)
+  const [leaderId, setLeaderId] = useState<string | null>(null)
   const [rosterFrozen, setRosterFrozen] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
   const [maxGroupSize, setMaxGroupSize] = useState(4)
@@ -71,6 +72,7 @@ export default function TeamPage() {
       setGroupId(g.id)
       setGroupName(g.name)
       setIsLeader(g.leader_id === user.id)
+      setLeaderId(g.leader_id)
       setRosterFrozen(g.roster_frozen)
 
       const { data: memberRows } = await supabase
@@ -267,6 +269,70 @@ export default function TeamPage() {
     await loadEverything()
   }
 
+  async function leaveGroup() {
+    if (!me || !groupId) return
+    setError('')
+
+    if (rosterFrozen) {
+      setError('Your roster is locked — you cannot leave the group once your topic has been approved.')
+      return
+    }
+
+    if (isLeader) {
+      const otherMembers = members.filter((m) => m.student_id !== me.id)
+
+      if (otherMembers.length > 0) {
+        setError('Please transfer leadership to another member before leaving the group.')
+        return
+      }
+
+      if (!confirm('You are the only member of this group. Leaving will delete the group entirely. Continue?')) return
+
+      setBusyMemberId(me.id)
+
+      const { error: memberError } = await supabase
+        .from('group_members')
+        .update({ status: 'removed' })
+        .eq('group_id', groupId)
+        .eq('student_id', me.id)
+
+      if (memberError) {
+        setBusyMemberId(null)
+        setError(memberError.message)
+        return
+      }
+
+      await supabase.from('groups').delete().eq('id', groupId)
+
+      setBusyMemberId(null)
+      await loadEverything()
+      return
+    }
+
+    if (!confirm('Are you sure you want to leave this group?')) return
+
+    setBusyMemberId(me.id)
+
+    const { error: leaveError } = await supabase
+      .from('group_members')
+      .update({ status: 'removed' })
+      .eq('group_id', groupId)
+      .eq('student_id', me.id)
+
+    setBusyMemberId(null)
+
+    if (leaveError) {
+      setError(leaveError.message)
+      return
+    }
+
+    if (leaderId) {
+      await createNotification(leaderId, 'member_left_group', `${me.full_name} left ${groupName}.`, groupId)
+    }
+
+    await loadEverything()
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -299,7 +365,12 @@ export default function TeamPage() {
                   const showLeaderControls = isLeader && !rosterFrozen && !isSelf
                   return (
                     <li key={m.student_id} className="flex items-center justify-between border-b border-[var(--border)] pb-2">
-                      <span>{m.full_name}</span>
+                      <Link
+                        href={isSelf ? '/profile' : `/profile/${m.student_id}`}
+                        className="hover:underline"
+                      >
+                        {m.full_name}
+                      </Link>
                       <div className="flex items-center gap-2">
                         {isLeader && isSelf && <span className="tag tag-locked">Leader</span>}
                         {showLeaderControls && (
@@ -320,6 +391,15 @@ export default function TeamPage() {
                             </button>
                           </>
                         )}
+                        {isSelf && !rosterFrozen && (
+                          <button
+                            onClick={leaveGroup}
+                            disabled={busyMemberId === m.student_id}
+                            className="btn-secondary text-xs py-1 px-2 text-[var(--danger)]"
+                          >
+                            Leave
+                          </button>
+                        )}
                       </div>
                     </li>
                   )
@@ -328,7 +408,7 @@ export default function TeamPage() {
 
               {rosterFrozen ? (
                 <p className="text-sm text-[var(--text-soft)] rounded-xl px-4 py-3" style={{ background: 'rgba(30,64,120,0.04)', border: '1px solid var(--border)' }}>
-                  Your topic has been approved, so the roster is locked — no new members can be invited or removed.
+                  Your topic has been approved, so the roster is locked — no new members can be invited, removed, or leave.
                 </p>
               ) : (
                 isLeader && members.length < maxGroupSize && (
