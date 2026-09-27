@@ -1,5 +1,6 @@
 // Replace the ENTIRE contents of app/login/student/page.tsx with this.
-// (Same logic as before — only the styling changed.)
+// (Added a role check after login: HoD accounts are now rejected here,
+// signed out immediately, with a clear error message.)
 
 'use client'
 
@@ -22,12 +23,42 @@ export default function StudentLogin() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    setLoading(false)
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+
     if (error) {
+      setLoading(false)
       setError(error.message)
       return
     }
+
+    if (!data.user) {
+      setLoading(false)
+      setError('Login failed. Please try again.')
+      return
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', data.user.id)
+      .single()
+
+    if (profileError || !profile) {
+      await supabase.auth.signOut()
+      setLoading(false)
+      setError('Could not verify account. Please try again.')
+      return
+    }
+
+    if (profile.role !== 'student') {
+      await supabase.auth.signOut()
+      setLoading(false)
+      setError('This is not a student account. Please use the HoD login page.')
+      return
+    }
+
+    setLoading(false)
     router.push('/home')
   }
 
