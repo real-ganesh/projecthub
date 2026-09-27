@@ -284,6 +284,7 @@ type Notification = {
   is_read: boolean
   created_at: string
   related_id: string | null
+  action_taken: boolean
 }
 
 function NotificationBell({
@@ -295,7 +296,6 @@ function NotificationBell({
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [userId, setUserId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [handledIds, setHandledIds] = useState<Set<string>>(new Set())
   const [actionError, setActionError] = useState<string>('')
 
   async function load() {
@@ -309,7 +309,7 @@ function NotificationBell({
 
     const { data } = await supabase
       .from('notifications')
-      .select('id, type, content, is_read, created_at, related_id')
+      .select('id, type, content, is_read, created_at, related_id, action_taken')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(20)
@@ -350,6 +350,13 @@ function NotificationBell({
     }
   }
 
+  async function markActionTaken(notificationId: string) {
+    await supabase.from('notifications').update({ action_taken: true }).eq('id', notificationId)
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notificationId ? { ...n, action_taken: true } : n))
+    )
+  }
+
   async function handleAcceptInvite(n: Notification) {
     if (!n.related_id) return
 
@@ -365,7 +372,7 @@ function NotificationBell({
       return
     }
 
-    setHandledIds((prev) => new Set(prev).add(n.id))
+    await markActionTaken(n.id)
   }
 
   async function handleDeclineInvite(n: Notification) {
@@ -383,7 +390,7 @@ function NotificationBell({
       return
     }
 
-    setHandledIds((prev) => new Set(prev).add(n.id))
+    await markActionTaken(n.id)
   }
 
   async function fetchActionableTopic(topicId: string) {
@@ -431,7 +438,7 @@ function NotificationBell({
       return
     }
 
-    setHandledIds((prev) => new Set(prev).add(n.id))
+    await markActionTaken(n.id)
   }
 
   async function handleRejectTopic(n: Notification) {
@@ -454,7 +461,7 @@ function NotificationBell({
 
     setBusyId(null)
 
-    setHandledIds((prev) => new Set(prev).add(n.id))
+    await markActionTaken(n.id)
   }
 
   async function handleRequestChangesOnTopic(
@@ -485,7 +492,7 @@ function NotificationBell({
 
     setBusyId(null)
 
-    setHandledIds((prev) => new Set(prev).add(n.id))
+    await markActionTaken(n.id)
   }
 
   return (
@@ -544,7 +551,7 @@ function NotificationBell({
           ) : (
             <div className="space-y-3">
               {notifications.map((n) => {
-                const isHandled = handledIds.has(n.id)
+                const isHandled = n.action_taken
                 const isBusy = busyId === n.id
 
                 return (
