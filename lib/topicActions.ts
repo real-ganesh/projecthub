@@ -1,7 +1,8 @@
-// Save this as lib/topicActions.ts
-// Shared logic so the Approvals page and the notification bell both
-// call the exact same approve/reject/request-changes code — no
-// duplicated logic that could drift out of sync.
+// Replace the ENTIRE contents of lib/topicActions.ts with this.
+// (approveTopic now re-checks the topic's live status before approving,
+// closing the gap where two different buttons — Approvals page and the
+// notification bell — could both approve the same request and double-insert
+// milestone rows into group_progress.)
 
 import { supabase } from './supabase'
 import { notifyGroupMembers, notifyHods } from './notifications'
@@ -26,6 +27,21 @@ async function logHistory(topicId: string, oldStatus: string, newStatus: string,
 }
 
 export async function approveTopic(t: ActionableTopic): Promise<{ error?: string }> {
+  // Re-check the topic's actual current status right before acting.
+  // This closes a race condition where two different buttons (the
+  // Approvals page and the notification bell) could both call this
+  // function for the same request, which was double-inserting
+  // milestone rows into group_progress.
+  const { data: currentTopic } = await supabase
+    .from('topics')
+    .select('status')
+    .eq('id', t.id)
+    .single()
+
+  if (!currentTopic || currentTopic.status !== 'pending') {
+    return { error: 'This request has already been handled.' }
+  }
+
   const { data: existingLocked } = await supabase
     .from('topics')
     .select('id')
@@ -37,7 +53,16 @@ export async function approveTopic(t: ActionableTopic): Promise<{ error?: string
     return { error: 'This group already has a locked topic. Reject or reassign their existing one first.' }
   }
 
-  await supabase.from('topics').update({ status: 'locked' }).eq('id', t.id)
+  const { error: updateError } = await supabase
+    .from('topics')
+    .update({ status: 'locked' })
+    .eq('id', t.id)
+    .eq('status', 'pending')
+
+  if (updateError) {
+    return { error: updateError.message }
+  }
+
   await supabase.from('groups').update({ roster_frozen: true }).eq('id', t.group_id)
 
   const { data: category } = await supabase

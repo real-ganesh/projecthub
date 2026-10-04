@@ -1,7 +1,3 @@
-// Replace the ENTIRE contents of lib/notifications.ts with this.
-// (Same as before — added notifyChatMessage: in-app + push only,
-// no email, since an email per chat message would be spam.)
-
 import { supabase } from './supabase'
 
 async function sendEmail(to: string, subject: string, text: string) {
@@ -36,7 +32,7 @@ export async function createNotification(
 ) {
   const { data } = await supabase
     .from('notifications')
-    .insert({ user_id: userId, type, content, related_id: relatedId || null })
+    .insert({ user_id: userId, type, content, related_id: relatedId || null, is_read: false })
     .select()
     .single()
 
@@ -49,10 +45,8 @@ export async function createNotification(
   return data
 }
 
-// For chat messages specifically — in-app + push, no email. type must
-// be 'new_group_message' or 'new_dm_message' (used for unread counts).
 export async function notifyChatMessage(userId: string, type: string, content: string, relatedId: string) {
-  await supabase.from('notifications').insert({ user_id: userId, type, content, related_id: relatedId })
+  await supabase.from('notifications').insert({ user_id: userId, type, content, related_id: relatedId, is_read: false })
   await sendPush(userId, 'ProjectHub', content)
 }
 
@@ -70,7 +64,7 @@ export async function notifyGroupMembers(
 
   if (members && members.length > 0) {
     await supabase.from('notifications').insert(
-      members.map((m) => ({ user_id: m.student_id, type, content, related_id: relatedId || null }))
+      members.map((m) => ({ user_id: m.student_id, type, content, related_id: relatedId || null, is_read: false }))
     )
 
     for (const m of members) {
@@ -86,7 +80,7 @@ export async function notifyAllStudents(type: string, content: string) {
 
   if (students && students.length > 0) {
     await supabase.from('notifications').insert(
-      students.map((s) => ({ user_id: s.id, type, content }))
+      students.map((s) => ({ user_id: s.id, type, content, is_read: false }))
     )
 
     for (const s of students) {
@@ -101,7 +95,7 @@ export async function notifyHods(type: string, content: string, relatedId?: stri
 
   if (hods && hods.length > 0) {
     await supabase.from('notifications').insert(
-      hods.map((h) => ({ user_id: h.id, type, content, related_id: relatedId || null }))
+      hods.map((h) => ({ user_id: h.id, type, content, related_id: relatedId || null, is_read: false }))
     )
 
     for (const h of hods) {

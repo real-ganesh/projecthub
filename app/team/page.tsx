@@ -1,6 +1,6 @@
 // Replace the ENTIRE contents of app/team/page.tsx with this.
-// (Added: leave-group functionality, and made member names clickable
-// links to profile pages — self links to /profile, others to /profile/[id].)
+// (Invite section now shows all eligible students by default, filters
+// live as you type, and each name links to their profile page.)
 
 'use client'
 
@@ -33,9 +33,11 @@ export default function TeamPage() {
   const [creatingGroup, setCreatingGroup] = useState(false)
   const creatingRef = useRef(false)
   const [search, setSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<Profile[]>([])
+  const [eligibleStudents, setEligibleStudents] = useState<Profile[]>([])
   const [error, setError] = useState('')
   const [busyMemberId, setBusyMemberId] = useState<string | null>(null)
+  const [invitingId, setInvitingId] = useState<string | null>(null)
+  const [sentInviteIds, setSentInviteIds] = useState<Set<string>>(new Set())
 
   const loadEverything = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -87,6 +89,25 @@ export default function TeamPage() {
           full_name: (m.profiles as unknown as { full_name: string })?.full_name || 'Unknown',
         }))
       )
+
+      if (g.leader_id === user.id && !g.roster_frozen && profile) {
+        const { data: activeMembers } = await supabase
+          .from('group_members')
+          .select('student_id')
+          .eq('status', 'active')
+
+        const excludedIds = (activeMembers || []).map((m) => m.student_id)
+
+        const { data: eligible } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, department')
+          .eq('department', profile.department)
+          .eq('role', 'student')
+          .not('id', 'in', `(${excludedIds.join(',')})`)
+          .order('full_name')
+
+        setEligibleStudents(eligible || [])
+      }
     } else {
       setGroupId(null)
       const { data: invites } = await supabase
@@ -150,32 +171,6 @@ export default function TeamPage() {
     await loadEverything()
   }
 
-  async function runSearch() {
-    if (!me || !search.trim()) {
-      setSearchResults([])
-      return
-    }
-
-    const { data: activeMembers } = await supabase
-      .from('group_members')
-      .select('student_id')
-      .eq('status', 'active')
-
-    const excludedIds = (activeMembers || []).map((m) => m.student_id)
-    excludedIds.push(me.id)
-
-    const { data: results } = await supabase
-      .from('profiles')
-      .select('id, full_name, email, department')
-      .eq('department', me.department)
-      .eq('role', 'student')
-      .ilike('full_name', `%${search}%`)
-      .not('id', 'in', `(${excludedIds.join(',')})`)
-      .limit(10)
-
-    setSearchResults(results || [])
-  }
-
   async function sendInvite(studentId: string) {
     if (!groupId || !me) return
     setError('')
@@ -189,11 +184,15 @@ export default function TeamPage() {
       return
     }
 
+    setInvitingId(studentId)
+
     const { data: newInvite, error: inviteError } = await supabase
       .from('group_invites')
       .insert({ group_id: groupId, invited_by: me.id, invited_student_id: studentId })
       .select()
       .single()
+
+    setInvitingId(null)
 
     if (inviteError || !newInvite) {
       setError(inviteError?.message || 'Could not send invite.')
@@ -202,8 +201,7 @@ export default function TeamPage() {
 
     await createNotification(studentId, 'invite_received', `${me.full_name} invited you to join ${groupName}`, newInvite.id)
 
-    setSearch('')
-    setSearchResults([])
+    setSentInviteIds((prev) => new Set(prev).add(studentId))
   }
 
   async function handleAccept(invite: Invite) {
@@ -333,6 +331,10 @@ export default function TeamPage() {
     await loadEverything()
   }
 
+  const filteredStudents = search.trim()
+    ? eligibleStudents.filter((s) => s.full_name.toLowerCase().includes(search.trim().toLowerCase()))
+    : eligibleStudents
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -414,25 +416,38 @@ export default function TeamPage() {
                 isLeader && members.length < maxGroupSize && (
                   <div>
                     <h2 className="font-medium mb-2 text-sm">Invite a member</h2>
-                    <div className="flex gap-2 mb-3">
-                      <input
-                        type="text"
-                        placeholder="Search by name…"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && runSearch()}
-                        className="input-field"
-                      />
-                      <button onClick={runSearch} className="btn-secondary whitespace-nowrap">Search</button>
-                    </div>
-                    <ul className="space-y-2">
-                      {searchResults.map((s) => (
-                        <li key={s.id} className="flex items-center justify-between">
-                          <span className="text-sm">{s.full_name} — {s.email}</span>
-                          <button onClick={() => sendInvite(s.id)} className="btn-primary text-sm py-1 px-3">Invite</button>
-                        </li>
-                      ))}
-                    </ul>
+                    <input
+                      type="text"
+                      placeholder="Search by name… (or browse below)"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="input-field mb-3"
+                    />
+                    {filteredStudents.length === 0 ? (
+                      <p className="text-sm text-[var(--text-soft)]">
+                        {search.trim() ? 'No matching students found.' : 'No eligible students available right now.'}
+                      </p>
+                    ) : (
+                      <ul className="space-y-2 max-h-72 overflow-y-auto">
+                        {filteredStudents.map((s) => {
+                          const alreadySent = sentInviteIds.has(s.id)
+                          return (
+                            <li key={s.id} className="flex items-center justify-between">
+                              <Link href={`/profile/${s.id}`} className="text-sm hover:underline">
+                                {s.full_name} <span className="text-[var(--text-soft)]">— {s.email}</span>
+                              </Link>
+                              <button
+                                onClick={() => sendInvite(s.id)}
+                                disabled={invitingId === s.id || alreadySent}
+                                className="btn-primary text-sm py-1 px-3 whitespace-nowrap"
+                              >
+                                {alreadySent ? 'Invited' : invitingId === s.id ? '…' : 'Add'}
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
                   </div>
                 )
               )}
