@@ -1,6 +1,6 @@
 // Replace the ENTIRE contents of app/team/page.tsx with this.
-// (Invite section now shows all eligible students by default, filters
-// live as you type, and each name links to their profile page.)
+// (Solo project option + empty groups are now deleted automatically by the
+// database once their last active member leaves.)
 
 'use client'
 
@@ -16,6 +16,11 @@ type Profile = { id: string; full_name: string; email: string; department: strin
 type Member = { student_id: string; full_name: string }
 type Invite = { id: string; group_id: string; group_name: string; invited_by_name: string }
 
+// Lowercase + collapse repeated spaces, so "BSC  IT" and "bsc it" compare equal.
+function normalizeDept(value: string | null | undefined) {
+  return (value || '').toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
 export default function TeamPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -23,6 +28,7 @@ export default function TeamPage() {
   const [groupId, setGroupId] = useState<string | null>(null)
   const [groupName, setGroupName] = useState('')
   const [isLeader, setIsLeader] = useState(false)
+  const [isSolo, setIsSolo] = useState(false)
   const [leaderId, setLeaderId] = useState<string | null>(null)
   const [rosterFrozen, setRosterFrozen] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
@@ -32,8 +38,13 @@ export default function TeamPage() {
   const [newGroupName, setNewGroupName] = useState('')
   const [creatingGroup, setCreatingGroup] = useState(false)
   const creatingRef = useRef(false)
+
   const [search, setSearch] = useState('')
-  const [eligibleStudents, setEligibleStudents] = useState<Profile[]>([])
+  const [candidates, setCandidates] = useState<Profile[]>([])
+  const [searching, setSearching] = useState(false)
+  const searchSeq = useRef(0)
+  const searchRef = useRef('')
+
   const [error, setError] = useState('')
   const [busyMemberId, setBusyMemberId] = useState<string | null>(null)
   const [invitingId, setInvitingId] = useState<string | null>(null)
@@ -62,18 +73,19 @@ export default function TeamPage() {
 
     const { data: myMembership } = await supabase
       .from('group_members')
-      .select('group_id, groups(id, name, leader_id, roster_frozen)')
+      .select('group_id, groups(id, name, leader_id, roster_frozen, is_solo)')
       .eq('student_id', user.id)
       .eq('status', 'active')
       .maybeSingle()
 
     if (myMembership && myMembership.groups) {
       const g = myMembership.groups as unknown as {
-        id: string; name: string; leader_id: string; roster_frozen: boolean
+        id: string; name: string; leader_id: string; roster_frozen: boolean; is_solo: boolean
       }
       setGroupId(g.id)
       setGroupName(g.name)
       setIsLeader(g.leader_id === user.id)
+      setIsSolo(!!g.is_solo)
       setLeaderId(g.leader_id)
       setRosterFrozen(g.roster_frozen)
 
@@ -89,27 +101,9 @@ export default function TeamPage() {
           full_name: (m.profiles as unknown as { full_name: string })?.full_name || 'Unknown',
         }))
       )
-
-      if (g.leader_id === user.id && !g.roster_frozen && profile) {
-        const { data: activeMembers } = await supabase
-          .from('group_members')
-          .select('student_id')
-          .eq('status', 'active')
-
-        const excludedIds = (activeMembers || []).map((m) => m.student_id)
-
-        const { data: eligible } = await supabase
-          .from('profiles')
-          .select('id, full_name, email, department')
-          .eq('department', profile.department)
-          .eq('role', 'student')
-          .not('id', 'in', `(${excludedIds.join(',')})`)
-          .order('full_name')
-
-        setEligibleStudents(eligible || [])
-      }
     } else {
       setGroupId(null)
+      setIsSolo(false)
       const { data: invites } = await supabase
         .from('group_invites')
         .select('id, group_id, groups(name), profiles!group_invites_invited_by_fkey(full_name)')
@@ -133,8 +127,110 @@ export default function TeamPage() {
     loadEverything()
   }, [loadEverything])
 
-  async function createGroup(e: React.FormEvent) {
-    e.preventDefault()
+  // Real search: queries the database for students matching the typed text
+  // (name or email), in the SAME department as the leader (capital/small
+  // letters and extra spaces ignored), not already in a group, not yourself.
+  // Results are ranked by how well the name matches.
+  const loadCandidates = useCallback(async (term: string) => {
+    if (!me || !groupId) return
+
+    const dept = (me.department || '').trim()
+    if (!dept) {
+      setCandidates([])
+      setSearching(false)
+      return
+    }
+
+    const seq = ++searchSeq.current
+    setSearching(true)
+
+    const clean = term.replace(/[%_,()\\]/g, '').trim()
+
+    // Loose database filter (case-insensitive, any spacing between words);
+    // exact same-department check is applied right after, below.
+    const deptPattern = dept
+      .split(/\s+/)
+      .map((word) => word.replace(/[\\%_]/g, (c) => '\\' + c))
+      .join('%')
+
+    let query = supabase
+      .from('profiles')
+      .select('id, full_name, email, department')
+      .eq('role', 'student')
+      .neq('id', me.id)
+      .ilike('department', deptPattern)
+      .limit(200)
+
+    if (clean) {
+      query = query.or(`full_name.ilike.%${clean}%,email.ilike.%${clean}%`)
+    }
+
+    const { data: students, error: searchError } = await query
+
+    const { data: activeMembers } = await supabase
+      .from('group_members')
+      .select('student_id')
+      .eq('status', 'active')
+
+    const { data: pending } = await supabase
+      .from('group_invites')
+      .select('invited_student_id')
+      .eq('group_id', groupId)
+      .eq('status', 'pending')
+
+    // A newer search has started since this one — ignore this stale result.
+    if (seq !== searchSeq.current) return
+
+    setSearching(false)
+
+    if (searchError) {
+      setError(searchError.message)
+      return
+    }
+
+    const inGroup = new Set((activeMembers || []).map((m) => m.student_id))
+    const myDept = normalizeDept(dept)
+    const q = clean.toLowerCase()
+
+    function rank(s: Profile) {
+      if (!q) return 3
+      const name = s.full_name.toLowerCase()
+      if (name.startsWith(q)) return 0
+      if (name.split(/\s+/).some((w) => w.startsWith(q))) return 1
+      if (name.includes(q)) return 2
+      return 3
+    }
+
+    const results = (students || [])
+      .filter((s) => normalizeDept(s.department) === myDept)
+      .filter((s) => !inGroup.has(s.id))
+      .sort((a, b) => rank(a) - rank(b) || a.full_name.localeCompare(b.full_name))
+
+    setSentInviteIds(new Set((pending || []).map((p) => p.invited_student_id)))
+    setCandidates(results)
+  }, [me, groupId])
+
+  // Search as you type (short pause so we don't query on every keystroke).
+  useEffect(() => {
+    searchRef.current = search
+    if (!groupId || !isLeader || isSolo || rosterFrozen || !me) return
+    const timer = setTimeout(() => loadCandidates(search), search.trim() ? 300 : 0)
+    return () => clearTimeout(timer)
+  }, [search, groupId, isLeader, isSolo, rosterFrozen, me, members.length, loadCandidates])
+
+  // Keep the list fresh so newly registered students show up.
+  useEffect(() => {
+    if (!groupId || !isLeader || isSolo || rosterFrozen || !me) return
+    const refresh = () => loadCandidates(searchRef.current)
+    window.addEventListener('focus', refresh)
+    const interval = setInterval(refresh, 30000)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      clearInterval(interval)
+    }
+  }, [groupId, isLeader, isSolo, rosterFrozen, me, loadCandidates])
+
+  async function createGroupWith(name: string, solo: boolean) {
     setError('')
 
     if (!me || groupId || creatingRef.current) return
@@ -143,7 +239,7 @@ export default function TeamPage() {
 
     const { data: newGroup, error: groupError } = await supabase
       .from('groups')
-      .insert({ name: newGroupName, leader_id: me.id, department: me.department })
+      .insert({ name, leader_id: me.id, department: me.department, is_solo: solo })
       .select()
       .single()
 
@@ -171,10 +267,87 @@ export default function TeamPage() {
     await loadEverything()
   }
 
-  async function sendInvite(studentId: string) {
-    if (!groupId || !me) return
+  async function createGroup(e: React.FormEvent) {
+    e.preventDefault()
+    await createGroupWith(newGroupName, false)
+  }
+
+  async function startSolo() {
+    if (!me) return
+    if (!confirm('Work on this project alone? You can request or propose a topic without a team, but group chat will not be available for a solo project.')) return
+    await createGroupWith(`${me.full_name} (Solo)`, true)
+  }
+
+  // True if this group has a topic request in progress or approved.
+  async function hasActiveTopic(): Promise<boolean> {
+    if (!groupId) return false
+    const { data } = await supabase
+      .from('topics')
+      .select('id')
+      .eq('locked_group_id', groupId)
+      .in('status', ['pending', 'pending_group_review', 'locked'])
+      .limit(1)
+    return !!data && data.length > 0
+  }
+
+  // Marks you as removed from your group. When a group has no active members
+  // left, the database deletes it automatically (together with its invites,
+  // messages, progress, submissions and stale notifications).
+  // Returns an error message, or null on success.
+  async function deleteMyOnlyGroup(): Promise<string | null> {
+    if (!me || !groupId) return 'You are not in a group.'
+
+    const { error: memberError } = await supabase
+      .from('group_members')
+      .update({ status: 'removed' })
+      .eq('group_id', groupId)
+      .eq('student_id', me.id)
+
+    if (memberError) return memberError.message
+
+    // Backup only: harmless if the database already deleted the group.
+    await supabase.from('groups').delete().eq('id', groupId)
+
+    return null
+  }
+
+  async function cancelSolo() {
+    if (!me || !groupId || !isSolo) return
     setError('')
 
+    if (rosterFrozen) {
+      setError('Your topic has been approved, so you cannot switch to a team now.')
+      return
+    }
+
+    if (await hasActiveTopic()) {
+      setError('You have a topic request in progress. Wait for the HoD\'s decision before switching to a team.')
+      return
+    }
+
+    if (!confirm('Switch to a team? Your solo project will be removed so you can create or join a group.')) return
+
+    setBusyMemberId(me.id)
+    const problem = await deleteMyOnlyGroup()
+    setBusyMemberId(null)
+
+    if (problem) {
+      setError(problem)
+      return
+    }
+
+    await loadEverything()
+  }
+
+  async function sendInvite(studentId: string) {
+    if (!groupId || !me) return
+    if (sentInviteIds.has(studentId)) return
+    setError('')
+
+    if (isSolo) {
+      setError('Solo projects cannot invite members.')
+      return
+    }
     if (rosterFrozen) {
       setError('Your roster is locked — your topic has already been approved.')
       return
@@ -284,25 +457,22 @@ export default function TeamPage() {
         return
       }
 
-      if (!confirm('You are the only member of this group. Leaving will delete the group entirely. Continue?')) return
-
-      setBusyMemberId(me.id)
-
-      const { error: memberError } = await supabase
-        .from('group_members')
-        .update({ status: 'removed' })
-        .eq('group_id', groupId)
-        .eq('student_id', me.id)
-
-      if (memberError) {
-        setBusyMemberId(null)
-        setError(memberError.message)
+      if (await hasActiveTopic()) {
+        setError('Your group has a topic request in progress. Wait for the HoD\'s decision before leaving.')
         return
       }
 
-      await supabase.from('groups').delete().eq('id', groupId)
+      if (!confirm('You are the only member of this group. Leaving will delete the group entirely. Continue?')) return
 
+      setBusyMemberId(me.id)
+      const problem = await deleteMyOnlyGroup()
       setBusyMemberId(null)
+
+      if (problem) {
+        setError(problem)
+        return
+      }
+
       await loadEverything()
       return
     }
@@ -331,10 +501,6 @@ export default function TeamPage() {
     await loadEverything()
   }
 
-  const filteredStudents = search.trim()
-    ? eligibleStudents.filter((s) => s.full_name.toLowerCase().includes(search.trim().toLowerCase()))
-    : eligibleStudents
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -355,10 +521,13 @@ export default function TeamPage() {
             <div className="glass-card fade-rise-in px-8 py-10">
               <div className="flex items-center justify-between mb-1">
                 <h1 className="font-display font-semibold text-2xl">{groupName}</h1>
-                {rosterFrozen && <span className="tag tag-locked">Roster Locked</span>}
+                <div className="flex items-center gap-2">
+                  {isSolo && <span className="tag tag-approved">Solo</span>}
+                  {rosterFrozen && <span className="tag tag-locked">{isSolo ? 'Locked' : 'Roster Locked'}</span>}
+                </div>
               </div>
               <p className="text-sm text-[var(--text-soft)] mb-6 font-mono">
-                {members.length} / {maxGroupSize} MEMBERS
+                {isSolo ? 'SOLO PROJECT' : `${members.length} / ${maxGroupSize} MEMBERS`}
               </p>
 
               <ul className="space-y-2 mb-8">
@@ -374,7 +543,7 @@ export default function TeamPage() {
                         {m.full_name}
                       </Link>
                       <div className="flex items-center gap-2">
-                        {isLeader && isSelf && <span className="tag tag-locked">Leader</span>}
+                        {isLeader && isSelf && !isSolo && <span className="tag tag-locked">Leader</span>}
                         {showLeaderControls && (
                           <>
                             <button
@@ -393,7 +562,7 @@ export default function TeamPage() {
                             </button>
                           </>
                         )}
-                        {isSelf && !rosterFrozen && (
+                        {isSelf && !rosterFrozen && !isSolo && (
                           <button
                             onClick={leaveGroup}
                             disabled={busyMemberId === m.student_id}
@@ -408,7 +577,26 @@ export default function TeamPage() {
                 })}
               </ul>
 
-              {rosterFrozen ? (
+              {isSolo ? (
+                rosterFrozen ? (
+                  <p className="text-sm text-[var(--text-soft)] rounded-xl px-4 py-3" style={{ background: 'rgba(30,64,120,0.04)', border: '1px solid var(--border)' }}>
+                    Your topic has been approved, so your solo project is locked in.
+                  </p>
+                ) : (
+                  <div>
+                    <p className="text-sm text-[var(--text-soft)] mb-3">
+                      You are working solo. Go to Select a Project to request a topic or propose your own — no team needed. Group chat is not available for solo projects.
+                    </p>
+                    <button
+                      onClick={cancelSolo}
+                      disabled={busyMemberId === me?.id}
+                      className="btn-secondary text-sm"
+                    >
+                      Switch to a team
+                    </button>
+                  </div>
+                )
+              ) : rosterFrozen ? (
                 <p className="text-sm text-[var(--text-soft)] rounded-xl px-4 py-3" style={{ background: 'rgba(30,64,120,0.04)', border: '1px solid var(--border)' }}>
                   Your topic has been approved, so the roster is locked — no new members can be invited, removed, or leave.
                 </p>
@@ -418,23 +606,29 @@ export default function TeamPage() {
                     <h2 className="font-medium mb-2 text-sm">Invite a member</h2>
                     <input
                       type="text"
-                      placeholder="Search by name… (or browse below)"
+                      placeholder="Search by name or email…"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      className="input-field mb-3"
+                      className="input-field mb-2"
                     />
-                    {filteredStudents.length === 0 ? (
+                    <p className="text-xs text-[var(--text-soft)] mb-3 font-mono">
+                      {searching
+                        ? 'SEARCHING…'
+                        : `${candidates.length} STUDENT${candidates.length === 1 ? '' : 'S'} AVAILABLE${me?.department ? ` IN ${me.department.toUpperCase()}` : ''}`}
+                    </p>
+                    {candidates.length === 0 && !searching ? (
                       <p className="text-sm text-[var(--text-soft)]">
-                        {search.trim() ? 'No matching students found.' : 'No eligible students available right now.'}
+                        {search.trim() ? 'No matching students found in your department.' : 'No eligible students available in your department right now.'}
                       </p>
                     ) : (
                       <ul className="space-y-2 max-h-72 overflow-y-auto">
-                        {filteredStudents.map((s) => {
+                        {candidates.map((s) => {
                           const alreadySent = sentInviteIds.has(s.id)
                           return (
-                            <li key={s.id} className="flex items-center justify-between">
+                            <li key={s.id} className="flex items-center justify-between gap-3">
                               <Link href={`/profile/${s.id}`} className="text-sm hover:underline">
-                                {s.full_name} <span className="text-[var(--text-soft)]">— {s.email}</span>
+                                {s.full_name}{' '}
+                                <span className="text-[var(--text-soft)]">— {s.email}</span>
                               </Link>
                               <button
                                 onClick={() => sendInvite(s.id)}
@@ -468,6 +662,16 @@ export default function TeamPage() {
                   {creatingGroup ? 'Creating…' : 'Create'}
                 </button>
               </form>
+
+              <div className="glass-card fade-rise-in px-8 py-8 mb-8">
+                <h2 className="font-display font-semibold text-xl mb-2">Prefer to work alone?</h2>
+                <p className="text-sm text-[var(--text-soft)] mb-4">
+                  Do a solo project: request or propose a topic for HoD approval without a team. Solo projects do not include group chat.
+                </p>
+                <button onClick={startSolo} disabled={creatingGroup} className="btn-secondary w-full">
+                  {creatingGroup ? 'Please wait…' : 'Work Solo'}
+                </button>
+              </div>
 
               {incomingInvites.length > 0 && (
                 <div className="glass-card fade-rise-in px-8 py-8">

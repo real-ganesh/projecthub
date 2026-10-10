@@ -1,11 +1,10 @@
 // Replace the ENTIRE contents of app/hod/approvals/page.tsx with this.
-// (Same approve/reject/request-changes logic as before — now shows
-// the proposed solution for custom topics, fetched via the secure
-// function since direct column access to it is now restricted.)
+// (Buttons now ignore double-clicks, all three actions show errors,
+// and the list always refreshes after an action.)
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
@@ -40,6 +39,7 @@ export default function ApprovalsPage() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [expandedSolution, setExpandedSolution] = useState<string | null>(null)
+  const busyRef = useRef(false)
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -93,32 +93,33 @@ export default function ApprovalsPage() {
     setExpandedSolution(t.id)
   }
 
-  async function approve(t: PendingTopic) {
+  // One shared runner for all three actions. The ref blocks fast double-clicks.
+  async function run(t: PendingTopic, action: () => Promise<{ error?: string }>) {
+    if (busyRef.current) return
+    busyRef.current = true
     setBusyId(t.id)
     setError('')
-    const result = await approveTopic(t)
+
+    const result = await action()
+    if (result.error) setError(result.error)
+
+    busyRef.current = false
     setBusyId(null)
-    if (result.error) {
-      alert(result.error)
-      return
-    }
-    load()
+    await load()
   }
 
-  async function reject(t: PendingTopic) {
-    setBusyId(t.id)
-    await rejectTopic(t)
-    setBusyId(null)
-    load()
+  function approve(t: PendingTopic) {
+    run(t, () => approveTopic(t))
   }
 
-  async function requestChanges(t: PendingTopic) {
+  function reject(t: PendingTopic) {
+    run(t, () => rejectTopic(t))
+  }
+
+  function requestChanges(t: PendingTopic) {
     const note = window.prompt('What changes are needed?')
     if (note === null) return
-    setBusyId(t.id)
-    await requestChangesOnTopic(t, note)
-    setBusyId(null)
-    load()
+    run(t, () => requestChangesOnTopic(t, note))
   }
 
   if (loading || !isHod) {
@@ -172,9 +173,9 @@ export default function ApprovalsPage() {
 
                 {t.status === 'pending' && (
                   <div className="flex gap-3">
-                    <button onClick={() => approve(t)} disabled={busyId === t.id} className="btn-primary text-sm py-2 px-4">Approve</button>
-                    <button onClick={() => reject(t)} disabled={busyId === t.id} className="btn-secondary text-sm py-2 px-4">Reject</button>
-                    <button onClick={() => requestChanges(t)} disabled={busyId === t.id} className="btn-secondary text-sm py-2 px-4">Request Changes</button>
+                    <button onClick={() => approve(t)} disabled={busyId !== null} className="btn-primary text-sm py-2 px-4">Approve</button>
+                    <button onClick={() => reject(t)} disabled={busyId !== null} className="btn-secondary text-sm py-2 px-4">Reject</button>
+                    <button onClick={() => requestChanges(t)} disabled={busyId !== null} className="btn-secondary text-sm py-2 px-4">Request Changes</button>
                   </div>
                 )}
               </div>

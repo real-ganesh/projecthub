@@ -1,11 +1,12 @@
 // Replace the ENTIRE contents of app/chat/group/page.tsx with this.
-// (Same chat logic as before — now notifies other members on send,
-// and marks this thread's notifications read on open.)
+// (Same chat logic as before — now solo students see a message instead of
+// the group chat, since a solo project has no group to chat with.)
 
 'use client'
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { Header } from '@/app/components/Header'
 import { ChatWindow, ChatMessage } from '@/app/components/ChatWindow'
@@ -17,6 +18,7 @@ export default function GroupChatPage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [groupId, setGroupId] = useState<string | null>(null)
   const [groupName, setGroupName] = useState('')
+  const [isSolo, setIsSolo] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -29,17 +31,19 @@ export default function GroupChatPage() {
 
       const { data: membership } = await supabase
         .from('group_members')
-        .select('group_id, groups(name)')
+        .select('group_id, groups(name, is_solo)')
         .eq('student_id', user.id)
         .eq('status', 'active')
         .maybeSingle()
 
+      const g = membership?.groups as unknown as { name: string; is_solo: boolean } | null
       const gId = membership?.group_id || null
       setGroupId(gId)
-      setGroupName((membership?.groups as unknown as { name: string })?.name || '')
+      setGroupName(g?.name || '')
+      setIsSolo(!!g?.is_solo)
 
       // Mark this thread's unread notifications as read now that it's open.
-      if (gId) {
+      if (gId && !g?.is_solo) {
         await supabase
           .from('notifications')
           .update({ is_read: true })
@@ -131,7 +135,14 @@ export default function GroupChatPage() {
     <div className="min-h-screen flex flex-col">
       <Header role="student" active="/chat/group" />
       <main className="flex-1 px-6 py-12 flex justify-center">
-        {!groupId ? (
+        {isSolo ? (
+          <div className="glass-card fade-rise-in px-8 py-10 text-center max-w-md">
+            <p className="text-[var(--text-soft)] mb-4">
+              Group chat is not available for solo projects. You can still message the HoD from HoD Chat.
+            </p>
+            <Link href="/team" className="btn-secondary text-sm">Back to My Team</Link>
+          </div>
+        ) : !groupId ? (
           <div className="glass-card fade-rise-in px-8 py-10 text-center max-w-md">
             <p className="text-[var(--text-soft)]">You need to be in a group first — head to My Team.</p>
           </div>

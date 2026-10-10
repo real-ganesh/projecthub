@@ -1,10 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { acceptGroupInvite, declineGroupInvite } from '@/lib/inviteActions'
-import { approveTopic, rejectTopic, requestChangesOnTopic } from '@/lib/topicActions'
+import {
+  approveTopic,
+  rejectTopic,
+  requestChangesOnTopic,
+  type ActionableTopic,
+} from '@/lib/topicActions'
 
 export function HubMark({ size = 28 }: { size?: number }) {
   return (
@@ -25,32 +30,9 @@ export function HubMark({ size = 28 }: { size?: number }) {
 
       <circle cx="16" cy="16" r="3.4" fill="url(#hubGradient)" />
 
-      <line
-        x1="16"
-        y1="12.5"
-        x2="16"
-        y2="6"
-        stroke="url(#hubGradient)"
-        strokeWidth="1.3"
-      />
-
-      <line
-        x1="18.8"
-        y1="17.7"
-        x2="24.5"
-        y2="21"
-        stroke="url(#hubGradient)"
-        strokeWidth="1.3"
-      />
-
-      <line
-        x1="13.2"
-        y1="17.7"
-        x2="7.5"
-        y2="21"
-        stroke="url(#hubGradient)"
-        strokeWidth="1.3"
-      />
+      <line x1="16" y1="12.5" x2="16" y2="6" stroke="url(#hubGradient)" strokeWidth="1.3" />
+      <line x1="18.8" y1="17.7" x2="24.5" y2="21" stroke="url(#hubGradient)" strokeWidth="1.3" />
+      <line x1="13.2" y1="17.7" x2="7.5" y2="21" stroke="url(#hubGradient)" strokeWidth="1.3" />
 
       <circle cx="16" cy="6" r="1.8" fill="#2f6fed" />
       <circle cx="24.5" cy="21" r="1.8" fill="#ff6b35" />
@@ -110,13 +92,17 @@ function HamburgerNav({
   active: string
 }) {
   const [open, setOpen] = useState(false)
+  const [isSolo, setIsSolo] = useState(false)
 
   const [chatBadges, setChatBadges] = useState<ChatBadges>({
     group: 0,
     hod: 0,
   })
 
-  const links = role === 'hod' ? hodLinks : studentLinks
+  // Solo students have no group chat, so that link is hidden for them.
+  const links = (role === 'hod' ? hodLinks : studentLinks).filter(
+    (l) => !(isSolo && l.href === '/chat/group')
+  )
 
   useEffect(() => {
     if (role !== 'student') return
@@ -130,14 +116,17 @@ function HamburgerNav({
 
       const { data: membership } = await supabase
         .from('group_members')
-        .select('group_id')
+        .select('group_id, groups(is_solo)')
         .eq('student_id', user.id)
         .eq('status', 'active')
         .maybeSingle()
 
+      const solo = !!(membership?.groups as unknown as { is_solo: boolean } | null)?.is_solo
+      setIsSolo(solo)
+
       let groupUnread = 0
 
-      if (membership?.group_id) {
+      if (membership?.group_id && !solo) {
         const { count } = await supabase
           .from('notifications')
           .select('*', { count: 'exact', head: true })
@@ -190,18 +179,9 @@ function HamburgerNav({
         className="w-9 h-9 flex flex-col items-center justify-center gap-[5px] rounded-lg hover:bg-[rgba(30,64,120,0.06)]"
         aria-label="Open menu"
       >
-        <span
-          className="block w-5 h-[2px]"
-          style={{ background: 'var(--text)' }}
-        />
-        <span
-          className="block w-5 h-[2px]"
-          style={{ background: 'var(--text)' }}
-        />
-        <span
-          className="block w-5 h-[2px]"
-          style={{ background: 'var(--text)' }}
-        />
+        <span className="block w-5 h-[2px]" style={{ background: 'var(--text)' }} />
+        <span className="block w-5 h-[2px]" style={{ background: 'var(--text)' }} />
+        <span className="block w-5 h-[2px]" style={{ background: 'var(--text)' }} />
       </button>
 
       {open && (
@@ -215,9 +195,7 @@ function HamburgerNav({
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <HubMark size={24} />
-                <span className="font-display font-semibold">
-                  ProjectHub
-                </span>
+                <span className="font-display font-semibold">ProjectHub</span>
               </div>
 
               <button
@@ -231,9 +209,7 @@ function HamburgerNav({
 
             <nav className="flex flex-col gap-1">
               {links.map((l) => {
-                const badge = l.badgeKey
-                  ? chatBadges[l.badgeKey]
-                  : 0
+                const badge = l.badgeKey ? chatBadges[l.badgeKey] : 0
 
                 return (
                   <a
@@ -243,13 +219,8 @@ function HamburgerNav({
                     className="flex items-center justify-between px-3 py-3 rounded-lg text-sm transition-colors"
                     style={{
                       background:
-                        l.href === active
-                          ? 'rgba(47,111,237,0.1)'
-                          : 'transparent',
-                      color:
-                        l.href === active
-                          ? 'var(--accent)'
-                          : 'var(--text)',
+                        l.href === active ? 'rgba(47,111,237,0.1)' : 'transparent',
+                      color: l.href === active ? 'var(--accent)' : 'var(--text)',
                     }}
                   >
                     <span>{l.label}</span>
@@ -287,16 +258,13 @@ type Notification = {
   action_taken: boolean
 }
 
-function NotificationBell({
-  role,
-}: {
-  role: 'student' | 'hod'
-}) {
+function NotificationBell({ role }: { role: 'student' | 'hod' }) {
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [userId, setUserId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string>('')
+  const busyRef = useRef(false)
 
   async function load() {
     const {
@@ -314,7 +282,37 @@ function NotificationBell({
       .order('created_at', { ascending: false })
       .limit(20)
 
-    setNotifications(data || [])
+    const rows = (data || []) as Notification[]
+
+    // Backup safety net: a "topic requested" notification whose topic is no
+    // longer pending is treated as handled, even if the saved flag is missing.
+    const topicIds = rows
+      .filter((n) => n.type === 'topic_requested' && !n.action_taken && n.related_id)
+      .map((n) => n.related_id as string)
+
+    let closedIds = new Set<string>()
+
+    if (topicIds.length > 0) {
+      const { data: topics, error: topicsError } = await supabase
+        .from('topics')
+        .select('id, status')
+        .in('id', topicIds)
+
+      if (!topicsError && topics) {
+        const pendingIds = new Set(
+          topics.filter((t) => t.status === 'pending').map((t) => t.id as string)
+        )
+        closedIds = new Set(topicIds.filter((id) => !pendingIds.has(id)))
+      }
+    }
+
+    setNotifications(
+      rows.map((n) =>
+        n.type === 'topic_requested' && n.related_id && closedIds.has(n.related_id)
+          ? { ...n, action_taken: true }
+          : n
+      )
+    )
   }
 
   useEffect(() => {
@@ -325,9 +323,16 @@ function NotificationBell({
     return () => clearInterval(interval)
   }, [])
 
-  const unreadCount = notifications.filter(
-    (n) => !n.is_read
-  ).length
+  const unreadCount = notifications.filter((n) => !n.is_read).length
+
+  // A notification "needs action" while it still shows Approve/Reject style buttons.
+  function needsAction(n: Notification) {
+    if (n.action_taken) return false
+    if (role === 'student') return n.type === 'invite_received' && !!n.related_id
+    return n.type === 'topic_requested' && !!n.related_id
+  }
+
+  const clearable = notifications.filter((n) => !needsAction(n))
 
   async function handleOpen() {
     setOpen(!open)
@@ -351,54 +356,76 @@ function NotificationBell({
   }
 
   async function markActionTaken(notificationId: string) {
-    await supabase.from('notifications').update({ action_taken: true }).eq('id', notificationId)
+    const { data, error } = await supabase
+      .from('notifications')
+      .update({ action_taken: true })
+      .eq('id', notificationId)
+      .select('id')
+
+    if (error || !data || data.length === 0) {
+      setActionError(
+        'Done, but the "handled" state could not be saved: ' +
+          (error?.message || 'no row was updated (check notification update permission).')
+      )
+    }
+
     setNotifications((prev) =>
       prev.map((n) => (n.id === notificationId ? { ...n, action_taken: true } : n))
     )
   }
 
-  async function handleAcceptInvite(n: Notification) {
-    if (!n.related_id) return
-
-    setBusyId(n.id)
+  async function clearIds(ids: string[]) {
+    if (ids.length === 0) return
     setActionError('')
 
-    const result = await acceptGroupInvite(n.related_id)
+    const { data, error } = await supabase
+      .from('notifications')
+      .delete()
+      .in('id', ids)
+      .select('id')
 
-    setBusyId(null)
-
-    if (result.error) {
-      setActionError(result.error)
+    if (error) {
+      setActionError(`Could not clear: ${error.message}`)
       return
     }
 
-    await markActionTaken(n.id)
-  }
-
-  async function handleDeclineInvite(n: Notification) {
-    if (!n.related_id) return
-
-    setBusyId(n.id)
-    setActionError('')
-
-    const result = await declineGroupInvite(n.related_id)
-
-    setBusyId(null)
-
-    if (result.error) {
-      setActionError(result.error)
+    if (!data || data.length === 0) {
+      setActionError(
+        'Could not clear: the database did not allow the delete (the delete permission for notifications is probably missing).'
+      )
       return
     }
 
-    await markActionTaken(n.id)
+    const deleted = new Set(data.map((d) => d.id as string))
+    setNotifications((prev) => prev.filter((n) => !deleted.has(n.id)))
   }
 
-  async function fetchActionableTopic(topicId: string) {
+  async function runInviteAction(
+    n: Notification,
+    action: (inviteId: string) => Promise<{ error?: string }>
+  ) {
+    if (!n.related_id || busyRef.current) return
+
+    busyRef.current = true
+    setBusyId(n.id)
+    setActionError('')
+
+    const result = await action(n.related_id)
+
+    if (result.error) {
+      setActionError(result.error)
+    } else {
+      await markActionTaken(n.id)
+    }
+
+    busyRef.current = false
+    setBusyId(null)
+  }
+
+  async function fetchActionableTopic(topicId: string): Promise<ActionableTopic | null> {
     const { data } = await supabase
       .from('topics')
-      .select(
-        'id, title, status, locked_group_id, category_id'
-      )
+      .select('id, title, status, locked_group_id, category_id')
       .eq('id', topicId)
       .single()
 
@@ -413,86 +440,39 @@ function NotificationBell({
     }
   }
 
-  async function handleApproveTopic(n: Notification) {
-    if (!n.related_id) return
-
-    setBusyId(n.id)
-    setActionError('')
-
-    const topic = await fetchActionableTopic(n.related_id)
-
-    if (!topic) {
-      setBusyId(null)
-      setActionError(
-        'This topic request no longer exists.'
-      )
-      return
-    }
-
-    const result = await approveTopic(topic)
-
-    setBusyId(null)
-
-    if (result.error) {
-      setActionError(result.error)
-      return
-    }
-
-    await markActionTaken(n.id)
-  }
-
-  async function handleRejectTopic(n: Notification) {
-    if (!n.related_id) return
-
-    setBusyId(n.id)
-    setActionError('')
-
-    const topic = await fetchActionableTopic(n.related_id)
-
-    if (!topic) {
-      setBusyId(null)
-      setActionError(
-        'This topic request no longer exists.'
-      )
-      return
-    }
-
-    await rejectTopic(topic)
-
-    setBusyId(null)
-
-    await markActionTaken(n.id)
-  }
-
-  async function handleRequestChangesOnTopic(
-    n: Notification
+  async function runTopicAction(
+    n: Notification,
+    action: (topic: ActionableTopic) => Promise<{ error?: string }>
   ) {
-    if (!n.related_id) return
+    if (!n.related_id || busyRef.current) return
 
-    const note = window.prompt(
-      'What changes are needed?'
-    )
-
-    if (note === null) return
-
+    busyRef.current = true
     setBusyId(n.id)
     setActionError('')
 
     const topic = await fetchActionableTopic(n.related_id)
 
     if (!topic) {
-      setBusyId(null)
-      setActionError(
-        'This topic request no longer exists.'
-      )
-      return
+      setActionError('This topic request no longer exists.')
+    } else {
+      const result = await action(topic)
+
+      if (result.error) {
+        setActionError(result.error)
+      } else {
+        await markActionTaken(n.id)
+      }
     }
 
-    await requestChangesOnTopic(topic, note)
-
+    busyRef.current = false
     setBusyId(null)
+    await load()
+  }
 
-    await markActionTaken(n.id)
+  function handleRequestChangesOnTopic(n: Notification) {
+    const note = window.prompt('What changes are needed?')
+    if (note === null) return
+    runTopicAction(n, (topic) => requestChangesOnTopic(topic, note))
   }
 
   return (
@@ -501,12 +481,7 @@ function NotificationBell({
         onClick={handleOpen}
         className="relative w-8 h-8 flex items-center justify-center rounded-full hover:bg-[rgba(30,64,120,0.06)] transition-colors"
       >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-        >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
           <path
             d="M12 3a6 6 0 0 0-6 6v3.5L4 16h16l-2-3.5V9a6 6 0 0 0-6-6z"
             stroke="var(--text-soft)"
@@ -534,20 +509,25 @@ function NotificationBell({
 
       {open && (
         <div className="absolute right-0 top-10 w-80 sm:w-96 glass-card px-4 py-4 z-50 max-h-[28rem] overflow-y-auto">
-          <h3 className="font-display font-semibold text-sm mb-3">
-            Notifications
-          </h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-display font-semibold text-sm">Notifications</h3>
+
+            {clearable.length > 0 && (
+              <button
+                onClick={() => clearIds(clearable.map((n) => n.id))}
+                className="text-xs text-[var(--accent)] underline"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
 
           {actionError && (
-            <p className="text-xs text-[var(--danger)] mb-3">
-              {actionError}
-            </p>
+            <p className="text-xs text-[var(--danger)] mb-3">{actionError}</p>
           )}
 
           {notifications.length === 0 ? (
-            <p className="text-sm text-[var(--text-soft)]">
-              Nothing yet.
-            </p>
+            <p className="text-sm text-[var(--text-soft)]">Nothing yet.</p>
           ) : (
             <div className="space-y-3">
               {notifications.map((n) => {
@@ -559,15 +539,22 @@ function NotificationBell({
                     key={n.id}
                     className="text-sm border-b border-[var(--border)] pb-3 last:border-0"
                   >
-                    <p className="text-[var(--text)]">
-                      {n.content}
-                    </p>
+                    <p className="text-[var(--text)]">{n.content}</p>
 
-                    <p className="text-xs text-[var(--text-soft)] font-mono mt-0.5 mb-2">
-                      {new Date(
-                        n.created_at
-                      ).toLocaleString()}
-                    </p>
+                    <div className="flex items-center justify-between mt-0.5 mb-2">
+                      <p className="text-xs text-[var(--text-soft)] font-mono">
+                        {new Date(n.created_at).toLocaleString()}
+                      </p>
+
+                      {!needsAction(n) && (
+                        <button
+                          onClick={() => clearIds([n.id])}
+                          className="text-xs text-[var(--text-soft)] underline"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
 
                     {!isHandled &&
                       role === 'student' &&
@@ -575,9 +562,7 @@ function NotificationBell({
                       n.related_id && (
                         <div className="flex gap-2">
                           <button
-                            onClick={() =>
-                              handleAcceptInvite(n)
-                            }
+                            onClick={() => runInviteAction(n, acceptGroupInvite)}
                             disabled={isBusy}
                             className="btn-primary text-xs py-1 px-3"
                           >
@@ -585,9 +570,7 @@ function NotificationBell({
                           </button>
 
                           <button
-                            onClick={() =>
-                              handleDeclineInvite(n)
-                            }
+                            onClick={() => runInviteAction(n, declineGroupInvite)}
                             disabled={isBusy}
                             className="btn-secondary text-xs py-1 px-3"
                           >
@@ -602,9 +585,7 @@ function NotificationBell({
                       n.related_id && (
                         <div className="flex gap-2 flex-wrap">
                           <button
-                            onClick={() =>
-                              handleApproveTopic(n)
-                            }
+                            onClick={() => runTopicAction(n, approveTopic)}
                             disabled={isBusy}
                             className="btn-primary text-xs py-1 px-3"
                           >
@@ -612,9 +593,7 @@ function NotificationBell({
                           </button>
 
                           <button
-                            onClick={() =>
-                              handleRejectTopic(n)
-                            }
+                            onClick={() => runTopicAction(n, rejectTopic)}
                             disabled={isBusy}
                             className="btn-secondary text-xs py-1 px-3"
                           >
@@ -622,9 +601,7 @@ function NotificationBell({
                           </button>
 
                           <button
-                            onClick={() =>
-                              handleRequestChangesOnTopic(n)
-                            }
+                            onClick={() => handleRequestChangesOnTopic(n)}
                             disabled={isBusy}
                             className="btn-secondary text-xs py-1 px-3"
                           >
@@ -633,11 +610,7 @@ function NotificationBell({
                         </div>
                       )}
 
-                    {isHandled && (
-                      <span className="tag tag-approved">
-                        Handled
-                      </span>
-                    )}
+                    {isHandled && <span className="tag tag-approved">Handled</span>}
                   </div>
                 )
               })}
@@ -654,9 +627,7 @@ function NotificationBell({
 /* -------------------------------------------------------------------------- */
 
 function AvatarLink({ active }: { active: string }) {
-  const [photoUrl, setPhotoUrl] = useState<string | null>(
-    null
-  )
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
 
   const [initial, setInitial] = useState('?')
 
@@ -675,11 +646,7 @@ function AvatarLink({ active }: { active: string }) {
         .single()
 
       if (data) {
-        setInitial(
-          (data.full_name || '?')
-            .charAt(0)
-            .toUpperCase()
-        )
+        setInitial((data.full_name || '?').charAt(0).toUpperCase())
 
         setPhotoUrl(data.photo_url || null)
       }
@@ -695,24 +662,14 @@ function AvatarLink({ active }: { active: string }) {
       href="/profile"
       className="block w-8 h-8 rounded-full overflow-hidden flex items-center justify-center font-mono text-xs font-semibold transition-all shrink-0"
       style={{
-        border: `2px solid ${
-          isActive
-            ? 'var(--accent)'
-            : 'var(--border-strong)'
-        }`,
-        background: photoUrl
-          ? 'transparent'
-          : 'var(--border)',
+        border: `2px solid ${isActive ? 'var(--accent)' : 'var(--border-strong)'}`,
+        background: photoUrl ? 'transparent' : 'var(--border)',
       }}
       title="Profile"
     >
       {photoUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={photoUrl}
-          alt="Profile"
-          className="w-full h-full object-cover"
-        />
+        <img src={photoUrl} alt="Profile" className="w-full h-full object-cover" />
       ) : (
         initial
       )}
@@ -741,10 +698,7 @@ export function Header({
   return (
     <header className="px-4 sm:px-8 py-4 rule grid grid-cols-3 items-center relative z-10">
       <div className="flex items-center">
-        <HamburgerNav
-          role={role}
-          active={active}
-        />
+        <HamburgerNav role={role} active={active} />
       </div>
 
       <div className="flex items-center justify-center gap-2 min-w-0">
